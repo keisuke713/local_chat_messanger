@@ -2,49 +2,67 @@ package main
 
 import (
 	"log"
-	"net"
 	"os"
-	"os/signal"
 	"syscall"
 )
 
-const sockAddr = "/tmp/echo.sock"
+const (
+	serverAddr = "/tmp/echo.sock"
+)
 
 func main() {
-	socket, err := net.Listen("unix", sockAddr)
+	var (
+		sockfd int
+		err    error
+	)
+
+	err = os.Remove(serverAddr)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to close file due to ", err)
 	}
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		os.Remove(sockAddr)
-		os.Exit(1)
-	}()
+	sockfd, err = syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		log.Fatal("failed to socket due to ", err)
+	}
+
+	sockaddr := &syscall.SockaddrUnix{
+		Name: serverAddr,
+	}
+	err = syscall.Bind(sockfd, sockaddr)
+	if err != nil {
+		log.Fatal("failed to bind due to ", err)
+	}
+
+	err = syscall.Listen(sockfd, 1)
+	if err != nil {
+		log.Fatal("failed to listen due to ", err)
+	}
+	log.Println("start")
 
 	for {
-		conn, err := socket.Accept()
+		// sa will not be used
+		nfd, _, err := syscall.Accept(sockfd)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("failed to accept due to ", err)
 		}
 
-		go func(conn net.Conn) {
-			defer conn.Close()
+		buf := make([]byte, 1024)
+		n, err := syscall.Read(nfd, buf)
+		if err != nil {
+			log.Fatal("failed to read due to ", err)
+		}
+		log.Println("Received message which is ", string(buf[:n]))
 
-			buf := make([]byte, 4096)
+		_, err = syscall.Write(nfd, []byte("success"))
+		if err != nil {
+			log.Fatal("faield to send due to ", err)
+		}
 
-			n, err := conn.Read(buf)
-			if err != nil {
-				log.Fatal(err)
-			}
-			log.Println("msg: ", string(buf))
-
-			_, err = conn.Write(buf[:n])
-			if err != nil {
-				log.Fatal(err)
-			}
-		}(conn)
+		err = syscall.Close(nfd)
+		if err != nil {
+			log.Fatal("failed to close due to ", err)
+		}
+		log.Println("close")
 	}
 }
